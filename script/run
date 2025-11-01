@@ -1,12 +1,232 @@
 #!/usr/bin/env python3
+"""Run Wyoming satellite with optional YAML configuration support."""
+import argparse
 import sys
 import subprocess
 import venv
 from pathlib import Path
 
+try:
+    import yaml
+    HAS_YAML = True
+except ImportError:
+    HAS_YAML = False
+
 _DIR = Path(__file__).parent
 _PROGRAM_DIR = _DIR.parent
 _VENV_DIR = _PROGRAM_DIR / ".venv"
 
-context = venv.EnvBuilder().ensure_directories(_VENV_DIR)
-subprocess.check_call([context.env_exe, "-m", "wyoming_satellite"] + sys.argv[1:])
+
+# Mapping of nested YAML structure to CLI arguments
+NESTED_KEY_MAPPING = {
+    # Satellite settings
+    'satellite.name': 'name',
+    'satellite.uri': 'uri',
+    'satellite.area': 'area',
+    
+    # Microphone settings
+    'microphone.command': 'mic-command',
+    'microphone.uri': 'mic-uri',
+    'microphone.auto_gain': 'mic-auto-gain',
+    'microphone.noise_suppression': 'mic-noise-suppression',
+    'microphone.volume_multiplier': 'mic-volume-multiplier',
+    'microphone.channel_index': 'mic-channel-index',
+    'microphone.seconds_to_mute_after_awake_wav': 'mic-seconds-to-mute-after-awake-wav',
+    'microphone.no_mute_during_awake_wav': 'mic-no-mute-during-awake-wav',
+    
+    # Speaker settings
+    'speaker.command': 'snd-command',
+    'speaker.uri': 'snd-uri',
+    'speaker.volume_multiplier': 'snd-volume-multiplier',
+    
+    # Wake word settings
+    'wake.uri': 'wake-uri',
+    'wake.word_name': 'wake-word-name',
+    'wake.refractory_seconds': 'wake-refractory-seconds',
+    
+    # VAD settings
+    'vad.enabled': 'vad',
+    'vad.threshold': 'vad-threshold',
+    'vad.trigger_level': 'vad-trigger-level',
+    'vad.buffer_seconds': 'vad-buffer-seconds',
+    'vad.wake_word_timeout': 'vad-wake-word-timeout',
+    
+    # Sound files
+    'sounds.awake_wav': 'awake-wav',
+    'sounds.done_wav': 'done-wav',
+    'sounds.timer_finished_wav': 'timer-finished-wav',
+    'sounds.timer_finished_wav_repeat': 'timer-finished-wav-repeat',
+    
+    # Event commands
+    'events.startup_command': 'startup-command',
+    'events.detect_command': 'detect-command',
+    'events.detection_command': 'detection-command',
+    'events.transcript_command': 'transcript-command',
+    'events.stt_start_command': 'stt-start-command',
+    'events.stt_stop_command': 'stt-stop-command',
+    'events.synthesize_command': 'synthesize-command',
+    'events.tts_start_command': 'tts-start-command',
+    'events.tts_stop_command': 'tts-stop-command',
+    'events.tts_played_command': 'tts-played-command',
+    'events.streaming_start_command': 'streaming-start-command',
+    'events.streaming_stop_command': 'streaming-stop-command',
+    'events.error_command': 'error-command',
+    'events.connected_command': 'connected-command',
+    'events.disconnected_command': 'disconnected-command',
+    
+    # Timer commands
+    'timers.started_command': 'timer-started-command',
+    'timers.updated_command': 'timer-updated-command',
+    'timers.cancelled_command': 'timer-cancelled-command',
+    'timers.finished_command': 'timer-finished-command',
+    
+    # Zeroconf settings
+    'zeroconf.enabled': 'no-zeroconf',  # Note: inverted logic
+    'zeroconf.name': 'zeroconf-name',
+    'zeroconf.host': 'zeroconf-host',
+    
+    # Debug settings
+    'debug.enabled': 'debug',
+    'debug.recording_dir': 'debug-recording-dir',
+    'debug.log_format': 'log-format',
+}
+
+
+def flatten_dict(d, parent_key='', sep='.'):
+    """Flatten a nested dictionary."""
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
+def load_args_from_yaml(config_file: Path) -> list[str]:
+    """Load configuration from YAML file and convert to CLI arguments."""
+    if not HAS_YAML:
+        print("Warning: PyYAML not installed. Install with: pip install PyYAML", file=sys.stderr)
+        return []
+    
+    try:
+        with open(config_file, 'r') as file:
+            config = yaml.safe_load(file)
+    except FileNotFoundError:
+        print(f"Warning: Config file not found: {config_file}", file=sys.stderr)
+        return []
+    except yaml.YAMLError as err:
+        print(f"Error parsing YAML config: {err}", file=sys.stderr)
+        return []
+    
+    if not config:
+        return []
+    
+    # Flatten nested structure
+    flat_config = flatten_dict(config)
+    
+    args = []
+    
+    for nested_key, value in flat_config.items():
+        # Skip None values
+        if value is None:
+            continue
+        
+        # Get CLI argument name from mapping, or convert key directly
+        cli_key = NESTED_KEY_MAPPING.get(nested_key)
+        
+        if cli_key is None:
+            # No mapping found, try direct conversion (for backwards compatibility with flat structure)
+            cli_key = nested_key.replace('_', '-')
+        
+        # Handle special case: zeroconf.enabled with inverted logic
+        if nested_key == 'zeroconf.enabled':
+            if not value:  # If zeroconf disabled, add --no-zeroconf flag
+                args.append('--no-zeroconf')
+            continue
+        
+        # Handle boolean flags
+        if isinstance(value, bool):
+            if value:
+                args.append(f"--{cli_key}")
+            continue
+        
+        # Handle lists
+        if isinstance(value, list):
+            # Special handling for timer-finished-wav-repeat
+            if cli_key == 'timer-finished-wav-repeat' and len(value) == 2:
+                args.append(f"--{cli_key}")
+                args.extend([str(v) for v in value])
+            # For wake-word-name which can be specified multiple times
+            elif cli_key == 'wake-word-name':
+                for item in value:
+                    args.append(f"--{cli_key}")
+                    if isinstance(item, list):
+                        # Handle wake word + pipeline format
+                        args.extend([str(v) for v in item])
+                    else:
+                        args.append(str(item))
+            else:
+                # Generic list handling
+                for item in value:
+                    args.append(f"--{cli_key}")
+                    args.append(str(item))
+            continue
+        
+        # Handle wake-word-name as string (most common case)
+        if cli_key == 'wake-word-name':
+            args.append(f"--{cli_key}")
+            args.append(str(value))
+            continue
+        
+        # Handle regular key-value pairs
+        args.append(f"--{cli_key}")
+        args.append(str(value))
+    
+    return args
+
+
+def main():
+    """Main entry point."""
+    # Simple argument parser to check for --config flag
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--config', type=Path, help='Path to YAML configuration file')
+    
+    # Parse known args to extract --config if present
+    known_args, remaining_args = parser.parse_known_args()
+    
+    args = []
+    
+    # If --config is specified, load from that file
+    if known_args.config:
+        if not HAS_YAML:
+            print("Error: PyYAML is required for YAML config support.", file=sys.stderr)
+            print("Install with: pip install PyYAML", file=sys.stderr)
+            sys.exit(1)
+        args = load_args_from_yaml(known_args.config)
+    # Otherwise, check for default config file
+    elif HAS_YAML:
+        default_config = _PROGRAM_DIR / "wyoming-satellite.yaml"
+        if default_config.exists():
+            args = load_args_from_yaml(default_config)
+    
+    # If YAML config provided args, use those; otherwise use CLI args
+    # CLI args can override YAML config if both are present
+    if args and not remaining_args:
+        # Pure YAML mode
+        final_args = args
+    elif args and remaining_args:
+        # Mixed mode: YAML base + CLI overrides
+        final_args = args + remaining_args
+    else:
+        # Pure CLI mode (original behavior)
+        final_args = sys.argv[1:]
+    
+    # Run the satellite
+    context = venv.EnvBuilder().ensure_directories(_VENV_DIR)
+    subprocess.check_call([context.env_exe, "-m", "wyoming_satellite"] + final_args)
+
+
+if __name__ == "__main__":
+    main()

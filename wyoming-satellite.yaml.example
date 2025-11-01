@@ -1,0 +1,73 @@
+# Wyoming Satellite Configuration Example
+# Copy to wyoming-satellite.yaml and customize
+
+satellite:
+  name: 'Wyoming Satellite'
+  uri: 'tcp://0.0.0.0:10700'
+  # area: 'Living Room'
+
+microphone:
+  command: 'arecord -r 16000 -c 1 -f S16_LE -t raw'
+  # uri: 'tcp://localhost:10600'
+  auto_gain: 0  # 0-31 dbFS
+  noise_suppression: 0  # 0-4 level
+  volume_multiplier: 1.0
+  # channel_index: 0
+  # seconds_to_mute_after_awake_wav: 0.5
+  # no_mute_during_awake_wav: false
+
+speaker:
+  command: 'aplay -r 22050 -c 1 -f S16_LE -t raw'
+  # uri: 'tcp://localhost:10601'
+  volume_multiplier: 1.0
+
+wake:
+  uri: 'tcp://localhost:10400'
+  word_name: 'ok_nabu'
+  # refractory_seconds: 5.0
+
+vad:
+  enabled: false
+  # threshold: 0.5
+  # trigger_level: 1
+  # buffer_seconds: 2.0
+  # wake_word_timeout: 5.0
+
+sounds:
+  # awake_wav: 'sounds/awake.wav'
+  # done_wav: 'sounds/done.wav'
+  # timer_finished_wav: 'sounds/timer_finished.wav'
+  # timer_finished_wav_repeat: [3, 1.0]  # [count, delay_seconds]
+
+events:
+  # startup_command: 'echo "Starting"'
+  # detect_command: 'echo "Detecting"'
+  # detection_command: 'echo "Detected"'
+  # transcript_command: 'echo "Transcript"'
+  # stt_start_command: 'echo "STT start"'
+  # stt_stop_command: 'echo "STT stop"'
+  # synthesize_command: 'echo "Synthesize"'
+  # tts_start_command: 'echo "TTS start"'
+  # tts_stop_command: 'echo "TTS stop"'
+  # tts_played_command: 'echo "TTS played"'
+  # streaming_start_command: 'echo "Streaming start"'
+  # streaming_stop_command: 'echo "Streaming stop"'
+  # error_command: 'echo "Error"'
+  # connected_command: 'echo "Connected"'
+  # disconnected_command: 'echo "Disconnected"'
+
+timers:
+  # started_command: 'echo "Timer started"'
+  # updated_command: 'echo "Timer updated"'
+  # cancelled_command: 'echo "Timer cancelled"'
+  # finished_command: 'echo "Timer finished"'
+
+debug:
+  enabled: false
+  # recording_dir: '/tmp/wyoming-debug'
+  # log_format: '%(levelname)s:%(name)s:%(message)s'
+
+zeroconf:
+  enabled: true
+  # name: 'my-satellite'
+  # host: '192.168.1.100'

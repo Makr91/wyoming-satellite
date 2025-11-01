@@ -15,3 +15,6 @@ __pycache__/
 
 /dist/
 /local/
+
+# User configuration files
+wyoming-satellite.yaml
